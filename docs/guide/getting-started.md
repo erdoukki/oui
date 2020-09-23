@@ -22,9 +22,6 @@ git clone https://github.com/zhaojh329/oui.git
 ``` bash
 cd oui/oui-ui-core/src/
 ```
-
-4.修改代理配置, 将`vue.config.js`里面的`openwrt.lan`更改为你的设备的IP地址
-
 4.Modify the proxy configuration: replace `openwrt.lan` in `vue.config.js` with the IP address of your device.
 
 ``` js
@@ -47,7 +44,7 @@ module.exports = {
 
 5.Install dependency packages
 ``` bash
-npm insstall
+npm install
 ```
 
 6.Start the Debugging Server
@@ -76,6 +73,72 @@ Refer to the source code for specific usage：`oui/oui-ui-core/src/src/plugins/u
 Oui adds the attribute `$ubus` to the Vue instance, which provides a series of methods for call ubus.
 
 Refer to the source code for specific usage：`oui/oui-ui-core/src/src/plugins/ubus.js`
+
+## String.format
+
+%t
+``` js
+'%t'.format(13124) === '3h 38m 44s'
+```
+
+%m
+``` js
+'%m'.format(1000) === '1.00 K'
+'%M'.format(1024) === '1.00 K'
+'%.3m'.format(1100) === '1.100 K'
+'%mB'.format(1100) === '1.10 KB'
+```
+
+%d
+``` js
+'%d'.format(10) === '10'
+'%d, %d'.format(5, 10) === '5, 10'
+'%5d'.format(123) === '  123'
+'%-5d'.format(123) === '123  '
+'%05d'.format(123) === '00123'
+```
+
+%s
+``` js
+'This is a %s'.format('pen') === 'This is a pen'
+'This is %s %s'.format('a', 'pen') === 'This is a pen'
+'%5s'.format('abc') === '  abc'
+'%-5s'.format('abc') === 'abc  '
+```
+
+%o
+``` js
+'123 => %o'.format(123) === '123 => 173'
+'0x7b => %o'.format(0x7b) === '0x7b => 173'
+```
+
+%b
+``` js
+'123 => %b'.format(123) === '123 => 1111011'
+'0x7b => %b'.format(0x7b) === '0x7b => 1111011'
+```
+
+%x
+``` js
+'123 => %x'.format(123) === '123 => 7b'
+```
+
+%X
+``` js
+'123 => %X'.format(123) === '123 => 7B'
+```
+
+%c
+``` js
+'%c'.format(97) === 'a'
+'%c'.format(0x61) === 'a'
+```
+
+%f
+``` js
+'%f'.format(1.12345) === '1.12345'
+'%.2f'.format(1.12345) === '1.12'
+```
 
 ## How to add a page
 
@@ -108,7 +171,7 @@ Create a very simple Vue component: `oui/oui-ui-core/src/src/views/test.vue`
 
 ``` vue
 <template>
-  <el-button type="primary">Hello，Oui</el-button>
+  <a-button type="primary">Hello，Oui</a-button>
 </template>
 ```
 
@@ -320,7 +383,7 @@ conn:add(methods)
 uloop.run()
 ```
 
-Mode 2: Write [rpcd](https://openwrt.org/start?Id=docs/techref/rpcd)plugin
+### Mode 2: Write [rpcd](https://openwrt.org/start?Id=docs/techref/rpcd)plugin
 
 Many times, we don't need to open a resident daemon for every UBUS service, so we can register our own UBUS service by adding plugins to rpcd.
 
@@ -461,7 +524,7 @@ Chinese are supported. Add the content you need to translate to the correspondin
 
 Use in Vue template: `$t('content')`
 ``` vue
-<uci-option-input :label="$t('Name')" name="name" required></uci-option-input>
+<oui-form-item-input :label="$t('Name')" name="name" required/>
 ```
 
 Use in JS: `this.$t('content')`
