@@ -22,8 +22,10 @@
  * SOFTWARE.
  */
 
-#include <uhttpd/uhttpd.h>
+#include <libubox/avl.h>
+#include <libubox/avl-cmp.h>
 #include <lauxlib.h>
+#include <dirent.h>
 #include <lualib.h>
 #include <errno.h>
 #include <time.h>
@@ -32,6 +34,7 @@
 #include "lua_utils.h"
 #include "session.h"
 #include "utils.h"
+#include "rpc.h"
 
 enum {
     RPC_ERROR_PARSE,
@@ -72,7 +75,13 @@ struct rpc_exec_context {
     pid_t pid;
 };
 
-const char *rpc_dir = ".";
+struct rpc_object {
+    struct avl_node avl;
+    lua_State *L;
+    char value[0];
+};
+
+static struct avl_tree rpc_objects;
 
 static void rpc_set_id(json_t *req, json_t *ret)
 {
@@ -88,7 +97,7 @@ static void rpc_set_id(json_t *req, json_t *ret)
     }
 
 null_id:
-    json_object_set(ret, "id", json_null());
+    json_object_set_new(ret, "id", json_null());
 }
 
 static void rpc_error(struct uh_connection *conn, int type, json_t *req)
@@ -98,13 +107,13 @@ static void rpc_error(struct uh_connection *conn, int type, json_t *req)
     char buf[512];
     size_t size;
 
-    json_object_set(ret, "jsonrpc", json_string("2.0"));
+    json_object_set_new(ret, "jsonrpc", json_string("2.0"));
 
     rpc_set_id(req, ret);
 
-    json_object_set(err, "code", json_integer(rpc_errors[type].code));
-    json_object_set(err, "message", json_string(rpc_errors[type].msg));
-    json_object_set(ret, "error", err);
+    json_object_set_new(err, "code", json_integer(rpc_errors[type].code));
+    json_object_set_new(err, "message", json_string(rpc_errors[type].msg));
+    json_object_set_new(ret, "error", err);
 
     size = json_dumpb(ret, buf, sizeof(buf), 0);
 
@@ -112,9 +121,7 @@ static void rpc_error(struct uh_connection *conn, int type, json_t *req)
     conn->send(conn, buf, size);
 
     json_decref(ret);
-
-    if (ret)
-        json_decref(req);
+    json_decref(req);
 
     conn->done(conn);
 }
@@ -151,11 +158,11 @@ static void rpc_resp(struct uh_connection *conn, json_t *req, json_t *result)
     size_t size;
     char *s;
 
-    json_object_set(root, "jsonrpc", json_string("2.0"));
+    json_object_set_new(root, "jsonrpc", json_string("2.0"));
 
     rpc_set_id(req, root);
 
-    json_object_set(root, "result", result);
+    json_object_set_new(root, "result", result);
 
     s = json_dumps(root, 0);
     size = strlen(s);
@@ -165,6 +172,7 @@ static void rpc_resp(struct uh_connection *conn, json_t *req, json_t *result)
 
     free(s);
 
+    json_decref(req);
     json_decref(root);
 
     conn->done(conn);
@@ -173,42 +181,32 @@ static void rpc_resp(struct uh_connection *conn, json_t *req, json_t *result)
 static void handle_rpc_call(struct uh_connection *conn, const char *sid, const char *object, const char *method,
                             json_t *args, json_t *req)
 {
-    char rpc_path[128];
+    struct rpc_object *obj;
     lua_State *L;
 
-    snprintf(rpc_path, sizeof(rpc_path), "%s/%s", rpc_dir, object);
-
-    if (access(rpc_path, R_OK)) {
+    obj = avl_find_element(&rpc_objects, object, obj, avl);
+    if (!obj) {
         rpc_error(conn, RPC_ERROR_CALL_OBJECT, req);
         return;
     }
 
-    L = luaL_newstate();
-
-    luaL_openlibs(L);
-    luaopen_json(L);
-    luaopen_utils(L);
-
-    if (luaL_dofile(L, rpc_path)) {
-        uh_log_err("%s\n", lua_tostring(L, -1));
-        rpc_error(conn, RPC_ERROR_INTERNAL, req);
-        goto err;
-    }
+    L = obj->L;
 
     if (!lua_istable(L, -1)) {
+        uh_log_err("lua state is broken. No table on stack!\n");
         rpc_error(conn, RPC_ERROR_INTERNAL, req);
-        goto err;
+        return;
     }
 
     lua_getfield(L, -1, method);
     if (!lua_isfunction(L, -1)) {
         rpc_error(conn, RPC_ERROR_CALL_METHOD, req);
-        goto err;
+        return;
     }
 
     if (!rpc_session_allowed(sid, object, method)) {
         rpc_error(conn, RPC_ERROR_ACCESS, req);
-        goto err;
+        return;
     }
 
     if (args)
@@ -219,13 +217,12 @@ static void handle_rpc_call(struct uh_connection *conn, const char *sid, const c
     if (lua_pcall(L, 1, 1, 0)) {
         uh_log_err("%s\n", lua_tostring(L, -1));
         rpc_error(conn, RPC_ERROR_INTERNAL, req);
-        goto err;
+        return;
     }
 
     rpc_resp(conn, req, lua_to_json(L));
 
-err:
-    lua_close(L);
+    lua_pop(L, 1);
 }
 
 static void rpc_exec_timeout_cb(struct ev_loop *loop, struct ev_timer *w, int revents)
@@ -256,7 +253,7 @@ static void rpc_exec_read(int fd, json_t *res, const char *name)
         buffer_put_data(&b, buf, nr);
     }
 
-    json_object_set(res, name, json_stringn(buffer_data(&b), buffer_length(&b)));
+    json_object_set_new(res, name, json_stringn(buffer_data(&b), buffer_length(&b)));
 
     buffer_free(&b);
 
@@ -270,12 +267,15 @@ static void rpc_exec_child_exit(struct ev_loop *loop, struct ev_child *w, int re
 
     ev_timer_stop(loop, &ctx->tmr);
 
-    json_object_set(res, "code", json_integer(WEXITSTATUS(w->rstatus)));
+    json_object_set_new(res, "code", json_integer(WEXITSTATUS(w->rstatus)));
 
     rpc_exec_read(ctx->stdout_fd, res, "stdout");
     rpc_exec_read(ctx->stderr_fd, res, "stderr");
 
     rpc_resp(ctx->conn, ctx->req, res);
+
+    /* Fix Segmentation fault */
+    ev_child_stop(loop, w);
 
     free(ctx);
 }
@@ -384,7 +384,7 @@ static void handle_rpc(struct uh_connection *conn, const char *method, json_t *p
         }
 
         result = json_object();
-        json_object_set(result, "sid", json_string(sid));
+        json_object_set_new(result, "sid", json_string(sid));
         rpc_resp(conn, req, result);
     } else if (!strcmp(method, "logout")) {
         const char *sid;
@@ -419,38 +419,38 @@ static void handle_rpc(struct uh_connection *conn, const char *method, json_t *p
         size_t size;
 
         if (!params || json_typeof(params) != JSON_ARRAY) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         size = json_array_size(params);
         if (size != 3 && size != 4) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         sid = json_array_get_string(params, 0);
         if (!sid) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         object = json_array_get_string(params, 1);
         if (!object) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         method = json_array_get_string(params, 2);
         if (!method) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         if (size == 4) {
             json = json_array_get(params, 3);
             if (!json_is_object(json)) {
-                rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+                rpc_error(conn, RPC_ERROR_PARAMS, req);
                 return;
             }
             args = json;
@@ -468,13 +468,13 @@ static void handle_rpc(struct uh_connection *conn, const char *method, json_t *p
 
         size = json_array_size(params);
         if (size < 2) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
         sid = json_array_get_string(params, 0);
         if (!sid) {
-            rpc_error(conn, RPC_ERROR_PARAMS, NULL);
+            rpc_error(conn, RPC_ERROR_PARAMS, req);
             return;
         }
 
@@ -521,7 +521,70 @@ void serve_rpc(struct uh_connection *conn)
         handle_rpc(conn, method, params, root);
         break;
     default:
-        rpc_error(conn, RPC_ERROR_PARSE, NULL);
+        rpc_error(conn, RPC_ERROR_PARSE, root);
         return;
     }
 }
+
+void load_rpc(const char *path)
+{
+    DIR *dir;
+    struct dirent *e;
+
+    avl_init(&rpc_objects, avl_strcmp, false, NULL);
+
+    dir = opendir(path);
+    if (!dir) {
+        uh_log_err("opendir fail: %s\n", strerror(errno));
+        return;
+    }
+
+    while ((e = readdir(dir))) {
+        char object_path[512] = "";
+        struct rpc_object *obj;
+        lua_State *L;
+
+        if (e->d_type != DT_REG || e->d_name[0] == '.')
+            continue;
+
+        L = luaL_newstate();
+
+        luaL_openlibs(L);
+        luaopen_json(L);
+        luaopen_utils(L);
+
+        snprintf(object_path, sizeof(object_path) - 1, "%s/%s", path, e->d_name);
+
+        if (luaL_dofile(L, object_path)) {
+            uh_log_err("load rpc: %s\n", lua_tostring(L, -1));
+            lua_close(L);
+            continue;
+        }
+
+        if (!lua_istable(L, -1)) {
+            uh_log_err("invalid rpc script, need return a table: %s\n", object_path);
+            lua_close(L);
+            continue;
+        }
+
+        obj = calloc(1, sizeof(struct rpc_object) + strlen(e->d_name) + 1);
+        obj->L = L;
+        strcpy(obj->value, e->d_name);
+        obj->avl.key = obj->value;
+        avl_insert(&rpc_objects, &obj->avl);
+    }
+
+    closedir(dir);
+}
+
+void unload_rpc()
+{
+    struct rpc_object *obj, *temp;
+
+    avl_for_each_element_safe(&rpc_objects, obj, avl, temp) {
+        avl_delete(&rpc_objects, &obj->avl);
+        lua_close(obj->L);
+        free(obj);
+    }
+}
+

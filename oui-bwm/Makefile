@@ -6,8 +6,10 @@
 
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
+include ../oui.mk
 
 PKG_NAME:=oui-bwm
+PKG_VERSION:=$(strip $(call findrev))
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 
@@ -15,7 +17,7 @@ include $(INCLUDE_DIR)/package.mk
 
 define Package/oui-bwm
   SECTION:=oui
-  CATEGORY:=OUI
+  CATEGORY:=Oui
   TITLE:=Bandwidth Monitor for oui
   DEPENDS:=+kmod-oui-bwm
   URL:=https://github.com/zhaojh329/oui

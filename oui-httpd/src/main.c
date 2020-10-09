@@ -32,6 +32,7 @@
 #include <uhttpd/uhttpd.h>
 
 #include "session.h"
+#include "rpc.h"
 
 enum {
     LONG_OPT_RPC = 1,
@@ -39,16 +40,12 @@ enum {
     LONG_OPT_INDEX = 3
 };
 
-extern const char *rpc_dir;
-
 static const char *home_dir = ".";
 static const char *index_page;
 
 void serve_upload(struct uh_connection *conn);
 
 void serve_download(struct uh_connection *conn);
-
-void serve_rpc(struct uh_connection *conn);
 
 static void on_request(struct uh_connection *conn)
 {
@@ -92,12 +89,14 @@ static struct option long_options[] = {
 
 int main(int argc, char **argv)
 {
-    struct ev_loop *loop = EV_DEFAULT;
+    struct ev_loop *loop;
     struct ev_signal signal_watcher;
     struct uh_server *srv = NULL;
+    const char *rpc_dir = ".";
     bool verbose = false;
     int port = 8080;
     int option_index;
+    int ret = 0;
     int opt;
 
     while ((opt = getopt_long(argc, argv, "p:v", long_options, &option_index)) != -1) {
@@ -111,12 +110,12 @@ int main(int argc, char **argv)
         case LONG_OPT_RPC:
             rpc_dir = optarg;
             break;
-		case LONG_OPT_HOME:
-			home_dir = optarg;
-			break;
-		case LONG_OPT_INDEX:
-			index_page = optarg;
-			break;
+        case LONG_OPT_HOME:
+            home_dir = optarg;
+            break;
+        case LONG_OPT_INDEX:
+            index_page = optarg;
+            break;
         default: /* '?' */
             usage(argv[0]);
         }
@@ -129,9 +128,18 @@ int main(int argc, char **argv)
 
     signal(SIGPIPE, SIG_IGN);
 
+    if (rpc_session_init())
+        return 1;
+
+    loop = EV_DEFAULT;
+
+    load_rpc(rpc_dir);
+
     srv = uh_server_new(loop, "0.0.0.0", port);
-    if (!srv)
-        return -1;
+    if (!srv) {
+        ret = 1;
+        goto err;
+    }
 
     srv->on_request = on_request;
 
@@ -140,12 +148,20 @@ int main(int argc, char **argv)
     ev_signal_init(&signal_watcher, signal_cb, SIGINT);
     ev_signal_start(loop, &signal_watcher);
 
-    rpc_session_init();
-
     ev_run(loop, 0);
 
-    srv->free(srv);
-    free(srv);
+err:
+    if (srv) {
+        srv->free(srv);
+        free(srv);
+    }
 
-    return 0;
+    rpc_session_deinit();
+
+	unload_rpc();
+
+    ev_loop_destroy(loop);
+
+    return ret;
 }
+

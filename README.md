@@ -24,10 +24,88 @@
 
 ![](/demo.gif)
 
+![](/diagram.png)
+
 OpenWrt web user interface implemented in [vue.js] and [Ant Design of Vue], inspired by [LuCI2].
 
-oui uses [json-rpc] to communicate with OpenWrt subsystems.
+Oui uses [json-rpc] to communicate with OpenWrt subsystems.
 
+Oui is especially suitable for enterprise custom development.
+
+# How to build
+## Add feeds
+
+	echo "src-git oui https://github.com/zhaojh329/oui.git" >> feeds.conf.default
+	./scripts/feeds update oui
+	./scripts/feeds install -a -p oui
+
+## Configure
+
+	Oui  --->
+		Applications  --->
+			<*> oui-app-admin............................................. Administration
+			<*> oui-app-diagnostics.......................................... Diagnostics
+			<*> oui-app-firewall................................................ Firewall
+			<*> oui-app-home.......................................... Built-in home page
+			<*> oui-app-interfaces.................................... Network Interfaces
+			<*> oui-app-system............................................ System Setting
+			<*> oui-app-upgrade......................................... Backup / Upgrade
+			<*> oui-app-wireless................................................ Wireless
+		-*- oui-bwm........................................ Bandwidth Monitor for oui
+		-*- oui-httpd................................................ Oui rpc backend
+		-*- oui-ui-core.................................................. Oui ui core
+	
+## Compile
+
+	make V=s
+
+# Jsonrpc example
+## General
+
+	{
+		"jsonrpc": "2.0",
+		"id": 27,
+		"method": "call",
+		"params": ["sid", "network", "dhcp_leases", {}]
+	}
+
+## Ubus
+
+	{
+		"jsonrpc": "2.0",
+		"id": 7,
+		"method": "call",
+		"params": ["sid", "ubus", "call", { "object": "system", "method": "board" }]
+	}
+
+#  How to modify vue
+## oui-ui-core
+1. Modify
+2. Enter directory 'oui/oui-ui-core/vue' and run the follow commands
+```
+	npm install
+	npm run build
+	../../scripts/clean-dist.sh dist
+```
+## application
+1. Modify
+2. Enter your application directory(e.g. 'oui-app-example') and run the follow commands
+```
+	cp vue/app.vue ../../build-app/src/
+```
+3. Enter directory oui/build-app and run the follow commands
+```
+	npm install
+	npm run build
+	cp dist/app.common.js.gz ../applications/oui-app-example/vue/dist/app.js
+```
+# How to debug vue for application(e.g. oui-app-example)
+1. Copy oui-app-example/vue/app.vue to oui-ui-core/vue/src/views/oui-app-example.vue
+2. Enter directory 'oui/oui-ui-core/vue' and run the follow commands
+```
+	npm install
+	npm run serve
+```
 # In Production
 
 <a href="https://www.perfectsignal-tech.com"><img src="https://nwzimg.wezhan.cn/contents/sitefiles2032/10164349/images/9482755.jpg" height="80" align="middle"/></a>&nbsp;&nbsp;
