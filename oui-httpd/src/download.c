@@ -27,39 +27,6 @@
 #include <ctype.h>
 #include <errno.h>
 
-static bool urldecode(char *buf)
-{
-    char *c, *p;
-
-    if (!buf || !*buf)
-        return true;
-
-#define hex(x) \
-    (((x) <= '9') ? ((x) - '0') : \
-        (((x) <= 'F') ? ((x) - 'A' + 10) : \
-            ((x) - 'a' + 10)))
-
-    for (c = p = buf; *p; c++) {
-        if (*p == '%') {
-            if (!isxdigit(*(p + 1)) || !isxdigit(*(p + 2)))
-                return false;
-
-            *c = (char) (16 * hex(*(p + 1)) + hex(*(p + 2)));
-
-            p += 3;
-        } else if (*p == '+') {
-            *c = ' ';
-            p++;
-        } else {
-            *c = *p++;
-        }
-    }
-
-    *c = 0;
-
-    return true;
-}
-
 struct download_params {
     char path[512];
     char filename[256];
@@ -107,16 +74,19 @@ static void parse_data(const char *body, int body_len, struct download_params *p
         }
     }
 
-    urldecode(params->path);
-    urldecode(params->filename);
+    urldecode(params->path, sizeof(params->path), params->path, strlen(params->path));
+    urldecode(params->filename, sizeof(params->filename), params->filename, strlen(params->filename));
 }
 
-void serve_download(struct uh_connection *conn)
+void serve_download(struct uh_connection *conn, int event)
 {
     struct uh_str var = conn->get_header(conn, "Content-Type");
     struct download_params params = {};
     struct uh_str body;
     struct stat st;
+
+    if (event != UH_EV_COMPLETE)
+        return;
 
     if (conn->get_method(conn) != HTTP_POST) {
         conn->error(conn, HTTP_STATUS_METHOD_NOT_ALLOWED, NULL);
@@ -160,12 +130,10 @@ void serve_download(struct uh_connection *conn)
         return;
     }
 
-    conn->send_file(conn, params.path);
-
     conn->send_status_line(conn, HTTP_STATUS_OK, "Content-Type: application/octet-stream\r\n");
-    conn->printf(conn, "Content-Length: %lld\r\n", st.st_size);
+    conn->printf(conn, "Content-Length: %"PRIx64"\r\n", (uint64_t)st.st_size);
     conn->printf(conn, "Content-Disposition: attachment; filename=\"%s\"\r\n", params.filename);
     conn->printf(conn, "\r\n");
-    conn->send_file(conn, params.path);
+    conn->send_file(conn, params.path, 0, -1);
     conn->done(conn);
 }

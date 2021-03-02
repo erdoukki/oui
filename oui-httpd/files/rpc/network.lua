@@ -1,10 +1,11 @@
+local utils = require "oui.utils"
 local uci = require "uci"
 
 local M = {}
 
 function M.bwm()
-	local entries = {}
-    local r, lines = pcall(io.lines, "/proc/oui/term")
+    local entries = {}
+    local r, lines = pcall(io.lines, "/proc/oui-bwm/term")
     if r then
         for line in lines do
             local mac, ip, rx, tx = line:match("(%S+) +(%S+) +(%S+) +(%S+)")
@@ -35,7 +36,7 @@ local function dnsmasq_leasefile()
 end
 
 function M.dhcp_leases()
-	local leases = {}
+    local leases = {}
     local leasefile = dnsmasq_leasefile()
 
     local r, lines = pcall(io.lines, leasefile)
@@ -54,7 +55,7 @@ function M.dhcp_leases()
 end
 
 function M.dhcp6_leases()
-	local leases = {}
+    local leases = {}
 
     local r, lines = pcall(io.lines, "/tmp/hosts/6relayd")
     if r then

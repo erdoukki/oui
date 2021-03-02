@@ -1,3 +1,7 @@
+local sqlite3 = require "lsqlite3"
+local utils = require "oui.utils"
+local cjson = require "oui.json"
+local rpc = require "oui.rpc"
 local uci = require "uci"
 
 local M = {}
@@ -23,7 +27,9 @@ end
 function M.set_lang(params)
     local c = uci.cursor()
 
-    if type(params.lang) ~= "string" then error("Invalid params") end
+    if type(params.lang) ~= "string" then
+        return rpc.ERROR_CODE_INVALID_PARAMS
+    end
 
     c:set("oui", "main", "lang", params.lang)
     c:commit("oui")
@@ -32,7 +38,7 @@ function M.set_lang(params)
 end
 
 function M.menu(params)
-	local menus = {}
+    local menus = {}
 
     local f = io.popen("ls " .. RPC_OUI_MENU_FILES .. " 2>/dev/null")
     if f then
@@ -51,7 +57,7 @@ function M.menu(params)
                     end
                 end
 
-                if files then
+                if files and rpc.access("menu", "/" .. path, "r") then
                     menus[path] = tmp
                 end
             end
@@ -63,31 +69,79 @@ function M.menu(params)
 end
 
 function M.load_locales(params)
-	local locales = {}
+    local locales = {}
 
-	if type(params.locale) ~= "string" then error("Invalid params") end
+    if type(params.locale) ~= "string" then
+        return rpc.ERROR_CODE_INVALID_PARAMS
+    end
 
-	local cmd = string.format("ls /www/i18n/*.%s.json 2>/dev/null", params.locale)
+    local cmd = string.format("ls /www/i18n/*.%s.json 2>/dev/null", params.locale)
 
-	local f = io.popen(cmd)
-		if f then
-		for file in f:lines() do
-			local locale = cjson.decode(utils.readfile(file))
-			locales[#locales + 1] = locale
-		end
-		f:close()
-	end
+    local f = io.popen(cmd)
+        if f then
+        for file in f:lines() do
+            local locale = cjson.decode(utils.readfile(file))
+            locales[#locales + 1] = locale
+        end
+        f:close()
+    end
 
-	return locales
+    return locales
+end
+
+local function set_password(params)
+    local username, password = params.username, params.password
+
+    if type(username) ~= "string" or  type(password) ~= "string" then
+        return rpc.ERROR_CODE_INVALID_PARAMS
+    end
+
+    local db = sqlite3.open("/etc/oui-httpd/oh.db")
+
+    local found = false
+
+    db:exec(string.format("SELECT password FROM account WHERE username = %s", username), function() found = true end)
+
+    if not found then
+        local aclgroup = username == "admin" and "admin" or ""
+        db:exec(string.format("INSERT INTO account VALUES('%s', '', '%s')", username, aclgroup))
+    end
+
+    local hash = utils.md5(username, password)
+    db:exec(string.format("UPDATE account SET password = '%s' WHERE username = '%s'", hash, username))
+
+    db:close()
 end
 
 function M.set_password(params)
-    if type(params.password) ~= "string" then
-        error("invalid params")
+    local s = rpc.session()
+
+    if s.aclgroup ~= "admin" and params.username ~= s.username then
+        return rpc.ERROR_CODE_ACCESS
+    end
+    return set_password(params)
+end
+
+function M.first_login()
+    local c = uci.cursor()
+
+    return {
+        first = c:get("oui", "main", "first") == "1"
+    }
+end
+
+function M.first_set(params)
+    if not M.first_login() then
+        return rpc.ERROR_CODE_ACCESS
     end
 
-    os.execute("mkdir /etc/oui")
-    utils.writefile("/etc/oui/shadow", params.password)
+    local c = uci.cursor()
+
+    c:set("oui", "main", "lang", params.lang)
+    c:set("oui", "main", "first", "0")
+    c:commit("oui")
+
+    return set_password(params)
 end
 
 return M

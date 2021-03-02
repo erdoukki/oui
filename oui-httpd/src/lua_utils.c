@@ -26,10 +26,11 @@
 #include <libubox/md5.h>
 #include <uhttpd/log.h>
 #include <arpa/inet.h>
+#include <stdbool.h>
+#include <lauxlib.h>
+#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
-
-#include "lua_utils.h"
 
 static int lua_md5sum(lua_State *L)
 {
@@ -38,10 +39,37 @@ static int lua_md5sum(lua_State *L)
     uint8_t buf[16];
     int i;
 
-    if (md5sum(file, buf)) {
+    if (md5sum(file, buf) < 0) {
         lua_pushnil(L);
         return 1;
     }
+
+    for (i = 0; i < 16; i++)
+        sprintf(md5 + i * 2, "%02x", buf[i]);
+
+    lua_pushstring(L, md5);
+
+    return 1;
+}
+
+static int lua_md5(lua_State *L)
+{
+    int n = lua_gettop(L);
+    md5_ctx_t ctx;
+    char md5[33] = "";
+    uint8_t buf[16];
+    const char *s;
+    size_t len;
+    int i;
+
+    md5_begin(&ctx);
+
+    for (i = 1; i <= n; i++) {
+        s = luaL_checklstring(L, i, &len);
+        md5_hash(s, len, &ctx);
+    }
+
+    md5_end(buf, &ctx);
 
     for (i = 0; i < 16; i++)
         sprintf(md5 + i * 2, "%02x", buf[i]);
@@ -133,15 +161,29 @@ static int lua_parse_route6_addr(lua_State *L)
     return 1;
 }
 
+static int lua_exists(lua_State *L)
+{
+    const char *file = luaL_checkstring(L, 1);
+
+    if (access(file, F_OK))
+        lua_pushboolean(L, false);
+    else
+        lua_pushboolean(L, true);
+
+    return 1;
+}
+
 static const luaL_Reg regs[] = {
     {"md5sum",            lua_md5sum},
+    {"md5",               lua_md5},
     {"statvfs",           lua_statvfs},
     {"parse_route_addr",  lua_parse_route_addr},
     {"parse_route6_addr", lua_parse_route6_addr},
+    {"exists", lua_exists},
     {NULL, NULL}
 };
 
-void luaopen_utils(lua_State *L)
+int luaopen_oui_utils_core(lua_State *L)
 {
 #if LUA_VERSION_NUM <= 501
     luaL_register(L, "utils", regs);
@@ -150,24 +192,5 @@ void luaopen_utils(lua_State *L)
     lua_pushvalue(L, -1);
     lua_setglobal(L, "utils");
 #endif
-
-    if (luaL_dofile(L, "/usr/lib/oui-httpd/lib/utils.lua")) {
-        uh_log_err("%s\n", lua_tostring(L, -1));
-        return;
-    }
-
-    if (!lua_istable(L, -1))
-        return;
-
-    lua_getglobal(L, "utils");
-
-    lua_pushvalue(L, -2);
-
-    lua_pushnil(L);
-
-    while (lua_next(L, -2) != 0) {
-        lua_pushvalue(L, -2);
-        lua_insert(L, -3);
-        lua_settable(L, -5);
-    }
+    return 1;
 }

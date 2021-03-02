@@ -1,9 +1,9 @@
 /*
- *	Copyright (C) 2019 jianhui zhao <zhaojh329@gmail.com>
+ *  Copyright (C) 2019 jianhui zhao <zhaojh329@gmail.com>
  *
- *	This program is free software; you can redistribute it and/or modify
- *	it under the terms of the GNU General Public License version 2 as
- *	published by the Free Software Foundation.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License version 2 as
+ *  published by the Free Software Foundation.
  */
 
 #include <linux/inetdevice.h>
@@ -13,22 +13,32 @@
 #include "subnet.h"
 
 static LIST_HEAD(subnets);
+static DEFINE_SPINLOCK(lock);
+
+static void subnet_rcu_free(struct rcu_head *head)
+{
+    struct subnet *n = container_of(head, struct subnet, rcu);
+
+    kfree(n);
+}
 
 static void clear_subnet(void)
 {
     struct subnet *pos, *n;
 
+    spin_lock(&lock);
     list_for_each_entry_safe(pos, n, &subnets, list) {
-        list_del(&pos->list);
-        kfree(pos);
+        list_del_rcu(&pos->list);
+        call_rcu(&pos->rcu, subnet_rcu_free);
     }
+    spin_unlock(&lock);
 }
 
 static bool subnet_exist(__be32 addr, __be32 mask)
 {
     struct subnet *net;
 
-    list_for_each_entry(net, &subnets, list) {
+    list_for_each_entry_rcu(net, &subnets, list) {
         if (net->addr == addr && net->mask == mask)
             return true;
     }
@@ -48,7 +58,9 @@ static void add_subnet(__be32 addr, __be32 mask)
     net->addr = addr;
     net->mask = mask;
 
-    list_add_tail(&net->list, &subnets);
+    spin_lock(&lock);
+    list_add_tail_rcu(&net->list, &subnets);
+    spin_unlock(&lock);
 }
 
 static int proc_show(struct seq_file *s, void *v)
@@ -59,7 +71,7 @@ static int proc_show(struct seq_file *s, void *v)
         seq_printf(s, "%pI4/%d\n", &net->addr, inet_mask_len(net->mask));
     }
 
-	return 0;
+    return 0;
 }
 
 static ssize_t proc_write(struct file *file, const char __user *buf, size_t size, loff_t *ppos)
@@ -72,7 +84,7 @@ static ssize_t proc_write(struct file *file, const char __user *buf, size_t size
         return -EINVAL;
 
     if (copy_from_user(addr, buf, sizeof(addr) - 1))
-		return -EFAULT;
+        return -EFAULT;
 
     if (addr[0] == 'c') {
         clear_subnet();
@@ -101,16 +113,16 @@ static ssize_t proc_write(struct file *file, const char __user *buf, size_t size
 
 static int proc_open(struct inode *inode, struct file *file)
 {
-	return single_open(file, proc_show, NULL);
+    return single_open(file, proc_show, NULL);
 }
 
 const static struct file_operations proc_ops = {
-	.owner 		= THIS_MODULE,
-	.open  		= proc_open,
-	.read   	= seq_read,
-	.write		= proc_write,
-	.llseek 	= seq_lseek,
-	.release 	= single_release
+    .owner      = THIS_MODULE,
+    .open       = proc_open,
+    .read       = seq_read,
+    .write      = proc_write,
+    .llseek     = seq_lseek,
+    .release    = single_release
 };
 
 int subnet_init(struct proc_dir_entry *proc)
@@ -129,7 +141,7 @@ bool match_subnet(__be32 addr)
 {
     struct subnet *net;
 
-    list_for_each_entry(net, &subnets, list) {
+    list_for_each_entry_rcu(net, &subnets, list) {
         if (!((addr ^ net->addr) & net->mask))
             return true;
     }

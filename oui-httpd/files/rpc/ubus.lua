@@ -1,4 +1,5 @@
 local ubus = require "ubus"
+local rpc = require "oui.rpc"
 
 local M = {}
 
@@ -12,7 +13,11 @@ function M.call(params)
     local method = params.method
 
     if type(object) ~= "string" or type(method) ~= "string" then
-        error("Invalid argument")
+        return rpc.ERROR_CODE_INVALID_PARAMS
+    end
+
+    if not rpc.access("ubus", string.format("%s.%s", object, method), "x") then
+        return rpc.ERROR_CODE_ACCESS
     end
 
     local res = conn:call(object, method, params.params or {})

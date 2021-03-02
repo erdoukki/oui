@@ -1,24 +1,24 @@
 import { rpc } from './rpc'
-import md5 from 'js-md5'
 
-export const session = {
-  aclCache: null
-}
+export const session = {}
 
 session.sid = function () {
   return sessionStorage.getItem('sid') || ''
 }
 
-session.login = function (password) {
+session.username = function () {
+  return sessionStorage.getItem('username') || ''
+}
+
+session.login = function (username, password) {
   return new Promise(resolve => {
     if (typeof (password) !== 'string') {
       password = ''
     }
 
-    if (password) password = md5(password)
-
-    rpc.login(password).then(r => {
+    rpc.login(username, password).then(r => {
       sessionStorage.setItem('sid', r.sid)
+      sessionStorage.setItem('username', username)
       this.startHeartbeat()
       resolve(true)
     }).catch(() => {
@@ -43,6 +43,7 @@ session.logout = function () {
 
     this.stopHeartbeat()
     sessionStorage.removeItem('sid')
+    sessionStorage.removeItem('username')
   })
 }
 

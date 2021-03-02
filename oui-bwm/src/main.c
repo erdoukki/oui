@@ -59,12 +59,12 @@ static int proc_open(struct inode *inode, struct file *file)
 }
 
 const static struct file_operations proc_ops = {
-    .owner 		= THIS_MODULE,
-    .open  		= proc_open,
-    .read   	= seq_read,
-    .write		= proc_write,
-    .llseek 	= seq_lseek,
-    .release 	= single_release
+    .owner      = THIS_MODULE,
+    .open       = proc_open,
+    .read       = seq_read,
+    .write      = proc_write,
+    .llseek     = seq_lseek,
+    .release    = single_release
 };
 
 static u32 oui_bwm_hook(void *priv, struct sk_buff *skb, const struct nf_hook_state *state)
@@ -79,13 +79,13 @@ static u32 oui_bwm_hook(void *priv, struct sk_buff *skb, const struct nf_hook_st
     daddr = iph->daddr;
 
     /* local -> remote */
-    if (match_subnet(saddr) && !match_subnet(daddr)) {
+    if (match_subnet(saddr)) {
         term = find_term(ehdr->h_source, true);
         tx = skb->len;
         addr = saddr;
     }
     /* remote -> local */
-    else if (match_subnet(daddr) && !match_subnet(saddr)) {
+    else if (match_subnet(daddr)) {
         struct neighbour *n = __ipv4_neigh_lookup_noref(state->out, daddr);
         if (n) {
             term = find_term(n->ha, true);
@@ -114,9 +114,9 @@ static int __init oui_bwm_init(void)
     struct proc_dir_entry *proc;
     int ret = 0;
 
-    proc = proc_mkdir("oui", NULL);
+    proc = proc_mkdir("oui-bwm", NULL);
     if (!proc) {
-        pr_err("can't create dir /proc/oui/\n");
+        pr_err("can't create dir /proc/oui-bwm/\n");
         return -ENODEV;;
     }
 
@@ -138,7 +138,7 @@ static int __init oui_bwm_init(void)
         goto term_free;
     }
 
-    pr_info("kmod of oui-bwm is started\n");
+    pr_info("oui-bwm: (C) 2019 jianhui zhao <zhaojh329@gmail.com>\n");
 
     return 0;
 
@@ -147,7 +147,7 @@ term_free:
 subnet_free:
     subnet_free();
 
-    remove_proc_subtree("oui", NULL);
+    remove_proc_subtree("oui-bwm", NULL);
     return ret;
 }
 
@@ -162,9 +162,7 @@ static void __exit oui_bwm_exit(void)
     term_free();
     subnet_free();
 
-    remove_proc_subtree("oui", NULL);
-
-    pr_info("kmod of oui-bwm is stop\n");
+    remove_proc_subtree("oui-bwm", NULL);
 }
 
 module_init(oui_bwm_init);

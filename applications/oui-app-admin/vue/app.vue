@@ -18,7 +18,7 @@ export default {
   data () {
     const validatePass = (rule, value, callback) => {
       if (value === '') {
-        callback(new Error(this.$t('Please enter your password')))
+        callback(new Error(this.$t('admin.Please enter your password')))
       } else {
         if (this.form.confirm !== '') { this.$refs.form.validateField('confirm') }
         callback()
@@ -52,7 +52,10 @@ export default {
     setPassword () {
       this.$refs.form.validate(valid => {
         if (!valid) return
-        this.$rpc.call('oui', 'set_password', { password: this.$md5(this.form.password) }).then(() => {
+        this.$rpc.call('oui', 'set_password', {
+          username: this.$session.username(),
+          password: this.form.password
+        }).then(() => {
           this.$router.push('/login')
         })
       })

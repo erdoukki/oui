@@ -1,9 +1,16 @@
+local rpc = require "oui.rpc"
 local ubus = require "ubus"
 local uci = require "uci"
 
 local M = {}
 
 function M.load(params)
+    local config = params.config
+
+    if not rpc.access("uci", config, "r") then
+        return rpc.ERROR_CODE_ACCESS
+    end
+
     local c = uci.cursor()
     return c:get_all(params.config)
 end
@@ -12,6 +19,10 @@ function M.set(params)
     local c = uci.cursor()
     local config = params.config
     local section = params.section
+
+    if not rpc.access("uci", config, "w") then
+        return rpc.ERROR_CODE_ACCESS
+    end
 
     for option, value in pairs(params.values) do
         c:set(config, section, option, value)
@@ -26,6 +37,10 @@ function M.delete(params)
     local section = params.section
     local options = params.options
 
+    if not rpc.access("uci", config, "w") then
+        return rpc.ERROR_CODE_ACCESS
+    end
+
     if options then
         for _, option in ipairs(options) do
             c:delete(config, section, option)
@@ -38,12 +53,33 @@ function M.delete(params)
 end
 
 function M.add(params)
-    local c = uci.cursor()
     local config = params.config
-    local section = c:add(config, params.type)
+    local typ = params.type
+    local name = params.name
+    local values = params.values
 
-    for option, value in pairs(params.values) do
-        c:set(config, section, option, value)
+    if type(config) ~= "string" or type(typ) ~= "string" then
+        return rpc.ERROR_CODE_INVALID_PARAMS
+    end
+
+    if values and type(values) ~= "table" then
+       return rpc.ERROR_CODE_INVALID_PARAMS
+    end
+
+    if not rpc.access("uci", config, "w") then
+        return rpc.ERROR_CODE_ACCESS
+    end
+
+    local c = uci.cursor()
+
+    if name then
+        c:set(config, name, typ)
+    else
+        name = c:add(config, typ)
+    end
+
+    for option, value in pairs(values) do
+        c:set(config, name, option, value)
     end
 
     c:save(config)
@@ -52,6 +88,10 @@ end
 function M.reorder(params)
     local c = uci.cursor()
     local config = params.config
+
+    if not rpc.access("uci", config, "w") then
+        return rpc.ERROR_CODE_ACCESS
+    end
 
     for i, section in ipairs(params.sections) do
         c:reorder(config, section, i - 1)

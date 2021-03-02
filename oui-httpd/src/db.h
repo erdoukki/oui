@@ -22,16 +22,12 @@
  * SOFTWARE.
  */
 
-#ifndef __LUA_JSON_H
-#define __LUA_JSON_H
+#ifndef __DB_H
+#define __DB_H
 
-#include <lauxlib.h>
-#include <jansson.h>
-
-void luaopen_json(lua_State *L);
-
-json_t *lua_to_json(lua_State *L);
-
-void json_to_lua(json_t *root, lua_State *L);
+void db_init(const char *path);
+int db_exec(const char *sql);
+int db_query(const char *sql, int (*cb)(void *data, int count, char **value, char **name), void *data);
 
 #endif
+

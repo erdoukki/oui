@@ -22,11 +22,15 @@
  * SOFTWARE.
  */
 
-#ifndef __LUA_UTILS_H
-#define __LUA_UTILS_H
+#ifndef __LUA_2_JSON_H
+#define __LUA_2_JSON_H
 
+#include <stdbool.h>
 #include <lauxlib.h>
+#include <jansson.h>
 
-void luaopen_utils(lua_State *L);
+json_t *lua_to_json(lua_State *L, int i, bool encode_empty_table_as_array);
+
+void json_to_lua(json_t *root, lua_State *L);
 
 #endif

@@ -8,5 +8,6 @@
     "Week": "Week",
     "Command": "Command",
     "DelConfirm": "Are you sure you want to delete \"{cron}\" ?",
+    "success": "Success"
   }
 }

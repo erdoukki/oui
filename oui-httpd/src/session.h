@@ -30,28 +30,31 @@
 
 #include "stdbool.h"
 
-#define RPC_DEFAULT_SESSION_TIMEOUT 300
+#define DEFAULT_SESSION_TIMEOUT 300
 
-#define RPC_SID_LEN    32
+#define MAX_SID_LEN      32
+#define MAX_USERNAME_LEN 32
+#define MAX_ACLGROUP_LEN 32
 
-struct rpc_session {
+struct session {
     struct avl_node avl;
-    char id[RPC_SID_LEN + 1];
+    char id[MAX_SID_LEN + 1];
+    char username[MAX_USERNAME_LEN + 1];
+    char aclgroup[MAX_ACLGROUP_LEN + 1];
 
     struct ev_timer tmr;
 
     int timeout;
 };
 
-int rpc_session_init();
-void rpc_session_deinit();
+void session_init();
 
-const char *rpc_login(const char *password);
+void session_deinit();
 
-void rpc_logout(const char *sid);
+const char *session_login(const char *username, const char *password);
 
-struct rpc_session *rpc_session_get(const char *sid);
+void session_logout(const char *sid);
 
-bool rpc_session_allowed(const char *sid, const char *object, const char *method);
+struct session *session_get(const char *sid);
 
 #endif

@@ -33,32 +33,25 @@
 
 #include "session.h"
 #include "rpc.h"
+#include "db.h"
 
 enum {
     LONG_OPT_RPC = 1,
-    LONG_OPT_HOME = 2,
-    LONG_OPT_INDEX = 3
+    LONG_OPT_HOME,
+    LONG_OPT_INDEX,
+    LONG_OPT_DB
 };
 
-static const char *home_dir = ".";
-static const char *index_page;
+void serve_upload(struct uh_connection *conn, int event);
 
-void serve_upload(struct uh_connection *conn);
+void serve_download(struct uh_connection *conn, int event);
 
-void serve_download(struct uh_connection *conn);
-
-static void on_request(struct uh_connection *conn)
+static void default_handler(struct uh_connection *conn, int event)
 {
-    const struct uh_str path = conn->get_path(conn);
+    if (event != UH_EV_COMPLETE)
+        return;
 
-    if (path.len == 7 && !strncmp(path.p, "/upload", 7))
-        serve_upload(conn);
-    else if (path.len == 9 && !strncmp(path.p, "/download", 9))
-        serve_download(conn);
-    else if (path.len == 4 && !strncmp(path.p, "/rpc", 4))
-        serve_rpc(conn);
-    else
-        conn->serve_file(conn, home_dir, index_page);
+    conn->serve_file(conn);
 }
 
 static void signal_cb(struct ev_loop *loop, ev_signal *w, int revents)
@@ -73,36 +66,60 @@ static void signal_cb(struct ev_loop *loop, ev_signal *w, int revents)
 static void usage(const char *prog)
 {
     fprintf(stderr, "Usage: %s [option]\n"
-                    "          -p port           # Default port is 8080\n"
-                    "          --rpc dir         # rpc directory \n"
-                    "          --home dir        # document root \n"
-                    "          --index oui.html  # set index page \n"
+                    "          -a [addr:]port    # Bind to specified address and port, multiple allowed\n"
+                    "          -s [addr:]port    # Like -a but provide HTTPS on this port\n"
+                    "          -C file           # server certificate file\n"
+                    "          -K file           # server private key file\n"
+                    "          --rpc dir         # rpc directory(default is .)\n"
+                    "          --home dir        # document root(default is .)\n"
+                    "          --index oui.html  # index page(default is oui.html)\n"
+                    "          --db oh.db        # database file(default is ./oh.db)\n"
                     "          -v                # verbose\n", prog);
     exit(1);
 }
 
 static struct option long_options[] = {
-    {"rpc", required_argument, NULL, LONG_OPT_RPC},
-    {"home", required_argument, NULL, LONG_OPT_HOME},
+    {"rpc",   required_argument, NULL, LONG_OPT_RPC},
+    {"home",  required_argument, NULL, LONG_OPT_HOME},
     {"index", required_argument, NULL, LONG_OPT_INDEX},
+    {"db",    required_argument, NULL, LONG_OPT_DB}
 };
 
 int main(int argc, char **argv)
 {
-    struct ev_loop *loop;
-    struct ev_signal signal_watcher;
+    struct ev_loop *loop = EV_DEFAULT;
+    struct ev_signal sigint_watcher;
     struct uh_server *srv = NULL;
     const char *rpc_dir = ".";
+    const char *db = "oh.db";
+    const char *home_dir = ".";
+    const char *index_page = "oui.html";
     bool verbose = false;
-    int port = 8080;
+    const char *cert = NULL;
+    const char *key = NULL;
     int option_index;
     int ret = 0;
     int opt;
 
-    while ((opt = getopt_long(argc, argv, "p:v", long_options, &option_index)) != -1) {
+    srv = uh_server_new(loop);
+    if (!srv)
+        return -1;
+
+    while ((opt = getopt_long(argc, argv, "a:s:C:K:v", long_options, &option_index)) != -1) {
         switch (opt) {
-        case 'p':
-            port = atoi(optarg);
+        case 'a':
+            if (srv->listen(srv, optarg, false) < 1)
+                goto srv_err;
+            break;
+        case 's':
+            if (srv->listen(srv, optarg, true) < 1)
+                goto srv_err;
+            break;
+        case 'C':
+            cert = optarg;
+            break;
+        case 'K':
+            key = optarg;
             break;
         case 'v':
             verbose = true;
@@ -116,6 +133,9 @@ int main(int argc, char **argv)
         case LONG_OPT_INDEX:
             index_page = optarg;
             break;
+        case LONG_OPT_DB:
+            db = optarg;
+            break;
         default: /* '?' */
             usage(argv[0]);
         }
@@ -126,42 +146,45 @@ int main(int argc, char **argv)
 
     uh_log_info("libuhttpd version: %s\n", UHTTPD_VERSION_STRING);
 
-    signal(SIGPIPE, SIG_IGN);
-
-    if (rpc_session_init())
-        return 1;
-
-    loop = EV_DEFAULT;
-
-    load_rpc(rpc_dir);
-
-    srv = uh_server_new(loop, "0.0.0.0", port);
-    if (!srv) {
-        ret = 1;
-        goto err;
+    if (cert && key) {
+#if UHTTPD_SSL_SUPPORT
+        if (srv->ssl_init(srv, cert, key) < 0)
+            goto srv_err;
+#endif
     }
 
-    srv->on_request = on_request;
+    signal(SIGPIPE, SIG_IGN);
 
-    uh_log_info("Listen on: *:%d\n", port);
+    db_init(db);
 
-    ev_signal_init(&signal_watcher, signal_cb, SIGINT);
-    ev_signal_start(loop, &signal_watcher);
+    session_init();
+
+    rpc_init(rpc_dir);
+
+    srv->set_docroot(srv, home_dir);
+    srv->set_index_page(srv, index_page);
+
+    srv->set_default_handler(srv, default_handler);
+    srv->add_path_handler(srv, "/rpc", serve_rpc);
+    srv->add_path_handler(srv, "/upload", serve_upload);
+    srv->add_path_handler(srv, "/download", serve_download);
+
+    ev_signal_init(&sigint_watcher, signal_cb, SIGINT);
+    ev_signal_start(loop, &sigint_watcher);
 
     ev_run(loop, 0);
 
-err:
+    session_deinit();
+
+    rpc_deinit();
+
+srv_err:
     if (srv) {
         srv->free(srv);
         free(srv);
     }
 
-    rpc_session_deinit();
-
-	unload_rpc();
-
     ev_loop_destroy(loop);
 
     return ret;
 }
-

@@ -1,3 +1,6 @@
+local utils = require "oui.utils"
+local rpc = require "oui.rpc"
+
 local M = {}
 
 function M.get()
@@ -20,7 +23,9 @@ function M.get()
 end
 
 function M.set(params)
-    if type(params.data) ~= "string" then error("invalid argument") end
+    if type(params.data) ~= "string" then
+		return rpc.ERROR_CODE_INVALID_PARAMS
+	end
 
     os.execute("mkdir -p /etc/crontabs")
     utils.writefile("/etc/crontabs/root", params.data)
